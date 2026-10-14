@@ -1,0 +1,10 @@
+{
+  "name": "atliq-sales-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Prototype: an AI assistant that keeps a founder-led sales team's CRM up to date. Capstone 1.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

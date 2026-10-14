@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AtliQ Sales &amp; CRM Assistant</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>AtliQ Sales &amp; CRM Assistant</h1>
+      <p class="sub">Prototype · reads the capstone dataset · “today” is <span id="today"></span></p>
+    </div>
+    <div id="ai-status" class="chip chip-grey">Checking AI…</div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="today" class="active">Today <span class="count" id="c-today"></span></button>
+    <button data-tab="review">Review <span class="count" id="c-review"></span></button>
+    <button data-tab="sources">Sources <span class="count" id="c-sources"></span></button>
+    <button data-tab="crm">CRM <span class="count" id="c-crm"></span></button>
+    <button data-tab="activity">Activity <span class="count" id="c-activity"></span></button>
+    <button data-tab="guardrails">Guardrails</button>
+  </nav>
+
+  <main id="view"></main>
+
+  <footer class="foot">
+    The AI reads, prepares and reminds. People decide, approve and talk to clients. Nothing here is sent to a client, and nothing changes in the CRM without your approval.
+  </footer>
+
+  <script src="data.js"></script>
+  <script src="lib/core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
