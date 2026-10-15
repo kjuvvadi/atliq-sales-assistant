@@ -257,14 +257,20 @@
   }
 
   function viewToday() {
-    const open = state.steps.filter((s) => !s.done && (ownerFilter === "All" || s.owner === ownerFilter || (ownerFilter === "No owner" && !s.owner)));
+    const allOpen = state.steps.filter((s) => !s.done);
+    const matchesOwner = (s, o) => o === "All" || (o === "No owner" ? !s.owner : s.owner === o);
+    const open = allOpen.filter((s) => matchesOwner(s, ownerFilter));
     const sorted = Core.sortNextSteps(open, TODAY);
     const p = pending().length;
+    const options = ["All"].concat(DATA.team, ["No owner"]).map((o) => '<option value="' + esc(o) + '"' + (o === ownerFilter ? " selected" : "") + ">" + esc(o) + " (" + allOpen.filter((s) => matchesOwner(s, o)).length + ")</option>").join("");
     let html = '<div class="row spread" style="margin-bottom:10px"><div><h2>Today\'s list</h2><div class="small muted">Approved next steps only. Order: overdue first, then nearest due date, then biggest deal, then longest wait.</div></div>' +
-      '<div><label class="small muted">Owner </label><select class="pick" id="owner-filter" style="width:auto">' + ["All"].concat(DATA.team, ["No owner"]).map((o) => "<option" + (o === ownerFilter ? " selected" : "") + ">" + o + "</option>").join("") + "</select></div></div>";
+      '<div><label class="small muted" for="owner-filter">Owner </label><select class="pick" id="owner-filter" style="width:auto">' + options + "</select></div></div>";
     if (p) html += '<div class="banner">' + p + " suggestion" + (p === 1 ? "" : "s") + ' waiting for your review. <a class="link" data-goto="review">Review now</a></div>';
-    if (!sorted.length) {
+    if (allOpen.length && ownerFilter !== "All") html += '<div class="small muted" style="margin-bottom:10px">Showing ' + sorted.length + " of " + allOpen.length + " open next steps · " + (ownerFilter === "No owner" ? "with no owner" : "owner " + esc(ownerFilter)) + ' · <a class="link" data-owner="All">show all</a></div>';
+    if (!allOpen.length) {
       html += '<div class="card muted">No approved next steps yet. Go to <a class="link" data-goto="sources">Sources</a> to analyse emails and notes, then approve suggestions in <a class="link" data-goto="review">Review</a>.</div>';
+    } else if (!sorted.length) {
+      html += '<div class="card muted">Nothing due for ' + (ownerFilter === "No owner" ? "unowned items" : esc(ownerFilter)) + ". " + allOpen.length + " open next step" + (allOpen.length === 1 ? " belongs" : "s belong") + ' to other owners. <a class="link" data-owner="All">Show all</a></div>';
     }
     sorted.forEach((s, i) => {
       const due = s.days_to_due == null ? '<span class="chip chip-amber">No date: please set one</span>' : s.days_to_due < 0 ? '<span class="chip chip-red">Overdue by ' + -s.days_to_due + " day" + (s.days_to_due === -1 ? "" : "s") + "</span>" : s.days_to_due === 0 ? '<span class="chip chip-red">Due today</span>' : '<span class="chip chip-' + (s.days_to_due <= 7 ? "amber" : "grey") + '">Due in ' + s.days_to_due + " day" + (s.days_to_due === 1 ? "" : "s") + " · " + fmtDate(s.due_date) + "</span>";
@@ -366,6 +372,7 @@
   view.addEventListener("click", async (e) => {
     const t = e.target;
     if (t.dataset.goto) { tab = t.dataset.goto; render(); return; }
+    if (t.dataset.owner) { ownerFilter = t.dataset.owner; render(); return; }
     const card = t.closest("[data-sid]");
     if (card && t.dataset.act === "approve") return approve(card.dataset.sid, card);
     if (card && t.dataset.act === "reject") return reject(card.dataset.sid);
