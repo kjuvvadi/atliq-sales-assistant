@@ -15,6 +15,8 @@
   let ai = { connected: false, model: "", note: "Checking AI…" };
   let run = { active: false, done: 0, total: 0, stop: false, note: "" };
   let ownerFilter = "All";
+  let crmEdit = null;   // null, "new", or the lead ID being edited
+  let crmSearch = "";
   const openSources = new Set();
 
   // ---------- state ----------
@@ -62,6 +64,79 @@
   function snapshot() {
     state._snapshot = JSON.stringify({ decisions: state.decisions, crm: state.crm, steps: state.steps, opps: state.opps, changed: state.changed });
   }
+  function nextLeadId() {
+    const max = state.crm.reduce((m, r) => Math.max(m, parseInt(String(r.lead_id).replace(/\D/g, ""), 10) || 0), 1000);
+    return "L-" + (max + 1);
+  }
+
+  // ---------- manual CRM editing (a person's own changes, recorded like approvals) ----------
+  const CRM_FIELDS = [
+    ["company", "Company *", "text"], ["contact_name", "Contact", "text"], ["contact_email", "Contact email", "email"],
+    ["source", "Source", "source"], ["service_interest", "Service interest", "text"], ["status", "Status", "status"],
+    ["est_value_usd", "Deal value (USD)", "number"], ["owner", "Owner", "owner"], ["last_contact_date", "Last contact", "date"],
+    ["next_followup_date", "Follow-up date", "date"], ["notes", "Notes", "text"],
+  ];
+
+  function crmForm(r, mode) {
+    const input = ([key, label, kind]) => {
+      const v = r[key] == null ? "" : r[key];
+      if (kind === "status" || kind === "owner" || kind === "source") {
+        const opts = kind === "status" ? STATUSES : kind === "owner" ? DATA.team : SOURCES;
+        return '<div><label>' + esc(label) + '</label><select data-cf="' + key + '"><option value="">not stated</option>' + opts.map((o) => '<option' + (o === v ? " selected" : "") + ">" + esc(o) + "</option>").join("") + "</select></div>";
+      }
+      const type = kind === "number" ? "number" : kind === "date" ? "date" : kind === "email" ? "email" : "text";
+      return '<div' + (key === "notes" ? ' style="grid-column:1/-1"' : "") + '><label>' + esc(label) + '</label><input type="' + type + '" data-cf="' + key + '" value="' + esc(v) + '"' + (kind === "number" ? ' min="0" step="1000"' : "") + ' placeholder="not stated"></div>';
+    };
+    return '<div class="crm-form" data-crm-form="' + esc(mode) + '"><h3>' + (mode === "new" ? "Add a CRM record" : "Edit " + esc(r.lead_id) + " · " + esc(r.company)) + '</h3><div class="fields">' + CRM_FIELDS.map(input).join("") +
+      '</div><div class="row"><button class="btn primary" data-crm="save">' + (mode === "new" ? "Add record" : "Save changes") + '</button><button class="btn" data-crm="cancel">Cancel</button><span class="small muted">* required. Your change is recorded in Activity and can be undone.</span></div></div>';
+  }
+
+  function saveCrm(formEl) {
+    const mode = formEl.dataset.crmForm;
+    const vals = {};
+    formEl.querySelectorAll("[data-cf]").forEach((el) => { vals[el.dataset.cf] = el.value.trim(); });
+    if (!vals.company) { alert("Company is required."); return; }
+    if (vals.contact_email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(vals.contact_email)) { alert("That contact email doesn't look right."); return; }
+    if (vals.est_value_usd !== "" && (isNaN(Number(vals.est_value_usd)) || Number(vals.est_value_usd) < 0)) { alert("Deal value must be a positive number."); return; }
+    vals.est_value_usd = vals.est_value_usd === "" ? null : Math.round(Number(vals.est_value_usd));
+
+    if (mode === "new") {
+      const probe = state.crm.concat([Object.assign({ lead_id: "NEW" }, vals)]);
+      const dup = Core.findDuplicates(probe).find((d) => d.lead_ids.includes("NEW"));
+      if (dup && !confirm("This looks like an existing record (" + dup.lead_ids.filter((x) => x !== "NEW").join(", ") + ", " + dup.why + "). Add it anyway?")) return;
+      snapshot();
+      const id = nextLeadId();
+      state.crm.push(Object.assign({ lead_id: id, created_date: TODAY }, vals));
+      CRM_FIELDS.forEach(([f]) => { if (vals[f] !== "" && vals[f] != null) markChanged(id, f); });
+      logAction("Added CRM record " + id + " · " + vals.company);
+    } else {
+      const r = record(mode);
+      if (!r) return;
+      const changed = CRM_FIELDS.map(([f]) => f).filter((f) => String(r[f] == null ? "" : r[f]) !== String(vals[f] == null ? "" : vals[f]));
+      if (!changed.length) { crmEdit = null; render(); return; }
+      snapshot();
+      changed.forEach((f) => { r[f] = vals[f]; markChanged(r.lead_id, f); });
+      logAction("Edited CRM record " + r.lead_id + " · " + r.company + " (" + changed.map((f) => CRM_FIELDS.find((x) => x[0] === f)[1].replace(" *", "").toLowerCase()).join(", ") + ")");
+    }
+    crmEdit = null;
+    save();
+    render();
+  }
+
+  function deleteCrm(id) {
+    const r = record(id);
+    if (!r) return;
+    const linked = state.steps.filter((s) => s.lead_id === id && !s.done).length;
+    if (!confirm("Delete " + id + " · " + r.company + "?" + (linked ? " " + linked + " open next step(s) still point to it." : "") + " You can undo this from the Activity tab.")) return;
+    snapshot();
+    state.crm = state.crm.filter((x) => x.lead_id !== id);
+    delete state.changed[id];
+    logAction("Deleted CRM record " + id + " · " + r.company);
+    if (crmEdit === id) crmEdit = null;
+    save();
+    render();
+  }
+
   function markChanged(leadId, field) {
     state.changed[leadId] = state.changed[leadId] || {};
     state.changed[leadId][field] = true;
@@ -155,8 +230,7 @@
     const rec = s.lead_id ? record(s.lead_id) : null;
 
     if (s.type === "new_lead") {
-      const n = 1001 + state.crm.length;
-      const id = "L-" + (state.crm.some((r) => r.lead_id === "L-" + n) ? n + 100 : n);
+      const id = nextLeadId();
       state.crm.push({ lead_id: id, company: s.company, contact_name: s.contact_name || "", contact_email: s.contact_email || "", source: s.lead_source || "", service_interest: s.service_interest || "", status: s.status || "New", est_value_usd: s.est_value_usd, owner: s.owner || "", created_date: TODAY, last_contact_date: it.date, next_followup_date: "", notes: "Added from " + it.id + ": “" + s.quote + "”" });
       ["company", "contact_name", "contact_email", "source", "service_interest", "status", "est_value_usd", "owner"].forEach((f) => markChanged(id, f));
     } else if (s.type === "crm_update" && rec) {
@@ -342,12 +416,17 @@
       if (issues.length) flagged++;
       const ch = state.changed[r.lead_id] || {};
       const td = (f, v) => '<td class="' + (ch[f] ? "changed" : "") + '">' + (v === "" || v == null ? '<span class="muted">not stated</span>' : esc(v)) + "</td>";
-      rows += "<tr><td>" + esc(r.lead_id) + "</td>" + td("company", r.company) + td("contact_name", r.contact_name) + td("status", r.status) + td("est_value_usd", r.est_value_usd == null ? "" : "$" + Number(r.est_value_usd).toLocaleString("en-US")) + td("owner", r.owner) + td("last_contact_date", r.last_contact_date) + td("next_followup_date", r.next_followup_date) + "<td>" + issues.map((i) => '<span class="chip chip-' + (i === "Possible duplicate" || i === "No owner" ? "red" : "amber") + '">' + esc(i) + "</span>").join(" ") + "</td></tr>";
+      const searchText = [r.lead_id, r.company, r.contact_name, r.contact_email, r.owner, r.status, r.service_interest].join(" ").toLowerCase();
+      const hidden = crmSearch && !searchText.includes(crmSearch.toLowerCase()) && crmEdit !== r.lead_id;
+      rows += '<tr data-search="' + esc(searchText) + '"' + (hidden ? ' style="display:none"' : "") + (crmEdit === r.lead_id ? ' class="editing"' : "") + "><td>" + esc(r.lead_id) + "</td>" + td("company", r.company) + td("contact_name", r.contact_name) + td("status", r.status) + td("est_value_usd", r.est_value_usd == null ? "" : "$" + Number(r.est_value_usd).toLocaleString("en-US")) + td("owner", r.owner) + td("last_contact_date", r.last_contact_date) + td("next_followup_date", r.next_followup_date) + "<td>" + issues.map((i) => '<span class="chip chip-' + (i === "Possible duplicate" || i === "No owner" ? "red" : "amber") + '">' + esc(i) + "</span>").join(" ") + '</td><td class="actions"><button class="btn small-btn" data-crm="edit" data-id="' + esc(r.lead_id) + '">Edit</button><button class="btn small-btn danger" data-crm="delete" data-id="' + esc(r.lead_id) + '">Delete</button></td></tr>';
+      if (crmEdit === r.lead_id) rows += '<tr class="edit-row"><td colspan="10">' + crmForm(r, r.lead_id) + "</td></tr>";
     });
-    let html = '<h2>CRM health check</h2><div class="small muted" style="margin-bottom:10px">' + flagged + " of " + state.crm.length + " records have something to check. These checks are plain rules, not AI. Green cells were changed by a suggestion you approved.</div>";
+    let html = '<div class="row spread" style="margin-bottom:10px"><div><h2>CRM</h2><div class="small muted">' + state.crm.length + " records · " + flagged + " have something to check (plain rules, not AI). Green cells were changed by you or by an approved suggestion.</div></div>" +
+      '<div class="row"><input type="search" id="crm-search" class="search" placeholder="Search company, contact, owner…" value="' + esc(crmSearch) + '"><button class="btn primary" data-crm="add">+ Add record</button></div></div>';
+    if (crmEdit === "new") html += '<div class="card">' + crmForm({ status: "New" }, "new") + "</div>";
     if (dups.length) html += '<div class="card"><h3>Possible duplicates (flag only: nothing is merged automatically)</h3><ul class="plain">' + dups.map((d) => "<li>" + d.lead_ids.map((id) => esc(id + " " + record(id).company + " (owner: " + (record(id).owner || "none") + ")")).join(" &nbsp;↔&nbsp; ") + ' <span class="muted small">· ' + esc(d.why) + "</span></li>").join("") + "</ul></div>";
     if (state.opps.length) html += '<div class="card"><h3>Approved opportunities</h3><ul class="plain">' + state.opps.map((o) => "<li><b>" + esc(o.company) + "</b> · " + esc(KIND_LABEL[o.kind] || "Opportunity") + " · " + esc(o.title) + ' <span class="muted small">· owner ' + esc(o.owner || "none") + " · " + esc(money(o.value)) + "</span></li>").join("") + "</ul></div>";
-    return html + '<div class="card tablewrap"><table><thead><tr><th>ID</th><th>Company</th><th>Contact</th><th>Status</th><th>Value</th><th>Owner</th><th>Last contact</th><th>Follow-up</th><th>To check</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+    return html + '<div class="card tablewrap"><table><thead><tr><th>ID</th><th>Company</th><th>Contact</th><th>Status</th><th>Value</th><th>Owner</th><th>Last contact</th><th>Follow-up</th><th>To check</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>";
   }
 
   function viewActivity() {
@@ -393,9 +472,20 @@
   view.addEventListener("change", (e) => {
     if (e.target.id === "owner-filter") { ownerFilter = e.target.value; render(); }
   });
+  view.addEventListener("input", (e) => {
+    if (e.target.id !== "crm-search") return;
+    crmSearch = e.target.value;
+    const q = crmSearch.trim().toLowerCase();
+    view.querySelectorAll("tr[data-search]").forEach((tr) => { tr.style.display = !q || tr.dataset.search.includes(q) ? "" : "none"; });
+  });
   view.addEventListener("click", async (e) => {
     const t = e.target;
     if (t.dataset.goto) { tab = t.dataset.goto; render(); return; }
+    if (t.dataset.crm === "add") { crmEdit = "new"; render(); return; }
+    if (t.dataset.crm === "edit") { crmEdit = t.dataset.id; render(); return; }
+    if (t.dataset.crm === "delete") return deleteCrm(t.dataset.id);
+    if (t.dataset.crm === "cancel") { crmEdit = null; render(); return; }
+    if (t.dataset.crm === "save") return saveCrm(t.closest("[data-crm-form]"));
     if (t.dataset.owner) { ownerFilter = t.dataset.owner; render(); return; }
     const card = t.closest("[data-sid]");
     if (card && t.dataset.act === "approve") return approve(card.dataset.sid, card);
