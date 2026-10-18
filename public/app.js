@@ -52,6 +52,7 @@
     return out;
   }
   const pending = () => allSuggestions().filter((x) => !state.decisions[x.sid]);
+  const flagged = () => allSuggestions().filter((x) => state.decisions[x.sid] === "review");
   const approvedFrom = (id) => Object.keys(state.decisions).some((k) => k.startsWith(id + "#") && state.decisions[k] === "approved");
 
   function logAction(text) {
@@ -185,6 +186,18 @@
     render();
   }
 
+  // "Needs further review": park a suggestion without approving or rejecting it. Nothing changes in the CRM.
+  function flagForReview(sid, on) {
+    const found = allSuggestions().find((x) => x.sid === sid);
+    if (!found) return;
+    snapshot();
+    if (on) state.decisions[sid] = "review";
+    else delete state.decisions[sid];
+    logAction((on ? "Marked as needing further review: " : "Moved back to the review queue: ") + TYPE_LABEL[found.s.type] + " · " + found.s.company + " · " + found.s.title);
+    save();
+    render();
+  }
+
   function markDone(stepId) {
     const st = state.steps.find((x) => x.id === stepId);
     if (!st) return;
@@ -240,7 +253,8 @@
     if (s.type !== "new_lead" && !rec) {
       pick = '<div><label>CRM record (none linked)</label><select data-field="lead_id"><option value="">no record</option>' + state.crm.map((r) => '<option value="' + r.lead_id + '">' + esc(r.lead_id + " · " + r.company) + "</option>").join("") + "</select></div>";
     }
-    const conf = s.confidence === "clear" ? '<span class="chip chip-green">Clear</span>' : '<span class="chip chip-amber">Please confirm</span>';
+    const isFlagged = state.decisions[x.sid] === "review";
+    const conf = (s.confidence === "clear" ? '<span class="chip chip-green">Clear</span>' : '<span class="chip chip-amber">Please confirm</span>') + (isFlagged ? '<span class="chip chip-flag">Needs further review</span>' : "");
     const extra = [];
     if (s.promised_by) extra.push(s.promised_by === "atliq" ? "AtliQ promised this" : "The client set this deadline");
     if (s.opportunity_kind) extra.push(KIND_LABEL[s.opportunity_kind]);
@@ -253,7 +267,9 @@
       "<blockquote>“" + esc(s.quote) + '”</blockquote><div class="small muted">Source: ' + esc(it.title) + " · " + fmtDate(it.date) + ' · <a class="link" data-act="toggle-source">' + (open ? "hide source" : "show source") + "</a></div>" +
       (open ? sourceBlock(it, s.quote) : "") + compare +
       '<div class="fields">' + f.join("") + pick + "</div>" +
-      '<div class="row"><button class="btn primary" data-act="approve">Approve</button><button class="btn danger" data-act="reject">Reject</button><span class="small muted">Empty fields stay “not stated”. Edit before approving if needed.</span></div></div>';
+      '<div class="row"><button class="btn primary" data-act="approve">Approve</button><button class="btn danger" data-act="reject">Reject</button>' +
+      (isFlagged ? '<button class="btn" data-act="unflag">Back to the queue</button>' : '<button class="btn flag" data-act="flag">Needs further review</button>') +
+      '<span class="small muted">Empty fields stay “not stated”. Edit before approving if needed.</span></div></div>';
   }
 
   function viewToday() {
@@ -265,7 +281,8 @@
     const options = ["All"].concat(DATA.team, ["No owner"]).map((o) => '<option value="' + esc(o) + '"' + (o === ownerFilter ? " selected" : "") + ">" + esc(o) + " (" + allOpen.filter((s) => matchesOwner(s, o)).length + ")</option>").join("");
     let html = '<div class="row spread" style="margin-bottom:10px"><div><h2>Today\'s list</h2><div class="small muted">Approved next steps only. Order: overdue first, then nearest due date, then biggest deal, then longest wait.</div></div>' +
       '<div><label class="small muted" for="owner-filter">Owner </label><select class="pick" id="owner-filter" style="width:auto">' + options + "</select></div></div>";
-    if (p) html += '<div class="banner">' + p + " suggestion" + (p === 1 ? "" : "s") + ' waiting for your review. <a class="link" data-goto="review">Review now</a></div>';
+    const f = flagged().length;
+    if (p || f) html += '<div class="banner">' + [p ? p + " suggestion" + (p === 1 ? "" : "s") + " waiting for your review" : "", f ? f + " marked as needing further review" : ""].filter(Boolean).join(" · ") + '. <a class="link" data-goto="review">Review now</a></div>';
     if (allOpen.length && ownerFilter !== "All") html += '<div class="small muted" style="margin-bottom:10px">Showing ' + sorted.length + " of " + allOpen.length + " open next steps · " + (ownerFilter === "No owner" ? "with no owner" : "owner " + esc(ownerFilter)) + ' · <a class="link" data-owner="All">show all</a></div>';
     if (!allOpen.length) {
       html += '<div class="card muted">No approved next steps yet. Go to <a class="link" data-goto="sources">Sources</a> to analyse emails and notes, then approve suggestions in <a class="link" data-goto="review">Review</a>.</div>';
@@ -284,9 +301,12 @@
 
   function viewReview() {
     const p = pending();
-    let html = '<h2>Review suggestions</h2><div class="small muted" style="margin-bottom:10px">Nothing changes in the CRM until you approve it. Every suggestion quotes the line it came from.</div>';
-    if (!p.length) return html + '<div class="card muted">Nothing waiting. Analyse more emails and notes in <a class="link" data-goto="sources">Sources</a>.</div>';
-    return html + p.map(suggestionCard).join("");
+    const fl = flagged();
+    let html = '<h2>Review suggestions</h2><div class="small muted" style="margin-bottom:10px">Nothing changes in the CRM until you approve it. Every suggestion quotes the line it came from. Not sure yet? Mark it “Needs further review” and come back to it.</div>';
+    if (!p.length && !fl.length) return html + '<div class="card muted">Nothing waiting. Analyse more emails and notes in <a class="link" data-goto="sources">Sources</a>.</div>';
+    html += p.length ? p.map(suggestionCard).join("") : '<div class="card muted">The queue is empty. Only items marked for further review are left.</div>';
+    if (fl.length) html += '<h3 class="section-title">Needs further review <span class="chip chip-flag">' + fl.length + "</span></h3>" + fl.map(suggestionCard).join("");
+    return html;
   }
 
   function viewSources() {
@@ -358,7 +378,7 @@
       if (b.dataset.tab === tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     });
     document.getElementById("c-today").textContent = state.steps.filter((s) => !s.done).length || "";
-    document.getElementById("c-review").textContent = pending().length || "";
+    document.getElementById("c-review").textContent = pending().length + flagged().length || "";
     document.getElementById("c-sources").textContent = Object.keys(state.analyses).length + "/" + DATA.items.length;
     document.getElementById("c-crm").textContent = state.crm.length;
     document.getElementById("c-activity").textContent = state.log.length || "";
@@ -380,6 +400,8 @@
     const card = t.closest("[data-sid]");
     if (card && t.dataset.act === "approve") return approve(card.dataset.sid, card);
     if (card && t.dataset.act === "reject") return reject(card.dataset.sid);
+    if (card && t.dataset.act === "flag") return flagForReview(card.dataset.sid, true);
+    if (card && t.dataset.act === "unflag") return flagForReview(card.dataset.sid, false);
     if (card && t.dataset.act === "toggle-source") { const k = card.dataset.sid; openSources.has(k) ? openSources.delete(k) : openSources.add(k); return render(); }
     if (t.dataset.src) { const k = t.dataset.src; openSources.has(k) ? openSources.delete(k) : openSources.add(k); return render(); }
     if (t.dataset.done) return markDone(t.dataset.done);
