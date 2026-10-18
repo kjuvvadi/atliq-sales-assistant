@@ -4,24 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AtliQ Sales &amp; CRM Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-tab="today">
   <header class="top">
-    <div>
-      <h1>AtliQ Sales &amp; CRM Assistant</h1>
-      <p class="sub">Prototype · reads the capstone dataset · “today” is <span id="today"></span></p>
+    <div class="brand">
+      <div class="logo" aria-hidden="true">A</div>
+      <div>
+        <h1>AtliQ Sales &amp; CRM Assistant</h1>
+        <p class="sub">Prototype · reads the capstone dataset · “today” is <span id="today"></span></p>
+      </div>
     </div>
     <div id="ai-status" class="chip chip-grey">Checking AI…</div>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button data-tab="today" class="active">Today <span class="count" id="c-today"></span></button>
-    <button data-tab="review">Review <span class="count" id="c-review"></span></button>
-    <button data-tab="sources">Sources <span class="count" id="c-sources"></span></button>
-    <button data-tab="crm">CRM <span class="count" id="c-crm"></span></button>
-    <button data-tab="activity">Activity <span class="count" id="c-activity"></span></button>
-    <button data-tab="guardrails">Guardrails</button>
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button data-tab="today" class="active"><span class="dot"></span>Today <span class="count" id="c-today"></span></button>
+    <button data-tab="review"><span class="dot"></span>Review <span class="count" id="c-review"></span></button>
+    <button data-tab="sources"><span class="dot"></span>Sources <span class="count" id="c-sources"></span></button>
+    <button data-tab="crm"><span class="dot"></span>CRM <span class="count" id="c-crm"></span></button>
+    <button data-tab="activity"><span class="dot"></span>Activity <span class="count" id="c-activity"></span></button>
+    <button data-tab="guardrails"><span class="dot"></span>Guardrails</button>
   </nav>
 
   <main id="view"></main>

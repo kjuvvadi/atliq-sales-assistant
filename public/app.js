@@ -352,7 +352,11 @@
 
   function render() {
     document.getElementById("today").textContent = fmtDate(TODAY);
-    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    document.body.dataset.tab = tab;
+    document.querySelectorAll("#tabs button").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === tab);
+      if (b.dataset.tab === tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
     document.getElementById("c-today").textContent = state.steps.filter((s) => !s.done).length || "";
     document.getElementById("c-review").textContent = pending().length || "";
     document.getElementById("c-sources").textContent = Object.keys(state.analyses).length + "/" + DATA.items.length;
